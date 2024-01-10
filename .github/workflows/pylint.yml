@@ -1,7 +1,7 @@
 name: Pylint
 
 on: [push]
-
+runs-on: self-hosted
 jobs:
   build:
     runs-on: ubuntu-latest
