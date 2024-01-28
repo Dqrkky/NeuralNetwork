@@ -1,6 +1,5 @@
 import nn
 import numpy as np
-import credentials
 
 X_train_text = ["cat", "dog", "apple", "banana"]
 y_train_text = ["animal", "animal", "fruit", "fruit"]
