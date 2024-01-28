@@ -1,5 +1,8 @@
 import os
 
 while True:
-    with os.popen("python test.py") as cmd:
-        print(cmd.read())
+    try:
+        with os.popen("python test.py") as cmd:
+            print(cmd.read())
+    except Exception:
+        pass
