@@ -78,22 +78,19 @@ class TextToTextNeuralNetwork:
     def train(self, X, y, epochs, learning_rate, batch_size=32, verbose=True):
         for epoch in range(epochs):
             total_loss = 0
-            for i in range(0, len(X), batch_size):
-                batch_X = X[i:i+batch_size]
-                batch_y = y[i:i+batch_size]
-                for j in range(len(batch_X)):
-                    input_sequence = batch_X[j]
-                    target_sequence = batch_y[j]
-                    self.predicted_output = np.zeros_like(target_sequence, dtype=float)
-                    x_one_hot = np.eye(self.vocab_size)[input_sequence]
-                    y_one_hot = np.eye(self.vocab_size)[target_sequence]
-                    output = self.forward(x_one_hot)
-                    self.backward(x_one_hot, y_one_hot, learning_rate)
-                    loss = -np.sum(y_one_hot * np.log(self.predicted_output + 1e-8))
-                    total_loss += loss
-                    if np.isnan(loss) or np.isinf(loss):
-                        print("NaN or Inf values encountered. Aborting training.")
-                        return
+            for i in range(len(X)):
+                input_sequence = X[i]
+                target_sequence = y[i]
+                self.predicted_output = np.zeros_like(target_sequence, dtype=float)
+                x_one_hot = np.eye(self.vocab_size)[input_sequence]
+                y_one_hot = np.eye(self.vocab_size)[target_sequence]
+                output = self.forward(x_one_hot)
+                self.backward(x_one_hot, y_one_hot, learning_rate)
+                loss = -np.sum(y_one_hot * np.log(self.predicted_output + 1e-8))
+                total_loss += loss
+                if np.isnan(loss) or np.isinf(loss):
+                    print("NaN or Inf values encountered. Aborting training.")
+                    return
             average_loss = total_loss / len(X)
             if verbose:
                 print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {average_loss}")
