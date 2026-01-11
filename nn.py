@@ -3,15 +3,25 @@ import numpy as np
 
 class TextToTextNeuralNetwork:
     def __init__(self, input_size, hidden_size, output_size, vocab_size, db_url, scale_factor=0.01):
+        # Initialize the network parameters
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.vocab_size = vocab_size
-        self.EPSILON = 1e-8
+        self.EPSILON = 1e-8  # Small value to prevent division by zero
         # Connect to the SQLite database
         self.connection = sqlite3.connect(db_url)
         self.cursor = self.connection.cursor()
         # Create tables if they don't exist
+        self.create_tables()
+        # Load model if it exists, else initialize with random weights
+        if not self.check_table_empty('weights_input_hidden') or not self.check_table_empty('weights_hidden_output'):
+            self.load_model()
+        else:
+            self.weights_input_hidden = scale_factor * np.random.randn(vocab_size, hidden_size).astype(float)
+            self.weights_hidden_output = scale_factor * np.random.randn(hidden_size, vocab_size).astype(float)
+    def create_tables(self):
+        # Create tables for storing weights
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS weights_input_hidden (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,12 +34,9 @@ class TextToTextNeuralNetwork:
                 weight REAL
             )
         ''')
-        if not self.check_table_empty('weights_input_hidden') or not self.check_table_empty('weights_hidden_output'):
-            self.load_model()
-        else:
-            self.weights_input_hidden = scale_factor * np.random.randn(vocab_size, hidden_size).astype(float)
-            self.weights_hidden_output = scale_factor * np.random.randn(hidden_size, vocab_size).astype(float)
+        self.connection.commit()
     def check_table_empty(self, table_name):
+        # Check if a table is empty
         self.cursor.execute(f'SELECT * FROM {table_name}')
         return not self.cursor.fetchone()
     def save_model(self):
@@ -52,13 +59,14 @@ class TextToTextNeuralNetwork:
         self.weights_input_hidden = self.load_weights('weights_input_hidden')
         self.weights_hidden_output = self.load_weights('weights_hidden_output')
     def load_weights(self, table_name):
+        # Load weights from a specified table
         self.cursor.execute(f'SELECT weight FROM {table_name}')
         weights = np.array([row[0] for row in self.cursor.fetchall()], dtype=float)
         return weights.reshape(-1, self.hidden_size if table_name == 'weights_input_hidden' else self.vocab_size)
     def softmax(self, x):
-        # Softmax activation function with stability trick
-        exp_x = np.exp(x - np.max(x, axis=0, keepdims=True))
-        return exp_x / (exp_x.sum(axis=0, keepdims=True) + self.EPSILON)
+        # Softmax activation function with numerical stability
+        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return exp_x / (exp_x.sum(axis=1, keepdims=True) + self.EPSILON)
     def forward(self, X):
         # Forward propagation through the network
         X = X.astype(float)
@@ -73,25 +81,34 @@ class TextToTextNeuralNetwork:
         output_delta = error
         self.weights_hidden_output += learning_rate * np.dot(self.hidden_layer_output.T, output_delta) / X.shape[0]
         hidden_error = np.dot(output_delta, self.weights_hidden_output.T)
-        hidden_delta = hidden_error * (1 - self.hidden_layer_output**2)
+        hidden_delta = hidden_error * (1 - self.hidden_layer_output ** 2)
         self.weights_input_hidden += learning_rate * np.dot(X.T, hidden_delta) / X.shape[0]
     def train(self, X, y, epochs, learning_rate, batch_size=32, verbose=True):
+        # Training the model using mini-batch gradient descent
         for epoch in range(epochs):
             total_loss = 0
-            for i in range(len(X)):
-                input_sequence = X[i]
-                target_sequence = y[i]
-                self.predicted_output = np.zeros_like(target_sequence, dtype=float)
-                x_one_hot = np.eye(self.vocab_size)[input_sequence]
-                y_one_hot = np.eye(self.vocab_size)[target_sequence]
-                output = self.forward(x_one_hot)
-                self.backward(x_one_hot, y_one_hot, learning_rate)
-                loss = -np.sum(y_one_hot * np.log(self.predicted_output + 1e-8))
-                total_loss += loss
-                if np.isnan(loss) or np.isinf(loss):
-                    print("NaN or Inf values encountered. Aborting training.")
-                    return
+            shuffled_indices = np.random.permutation(len(X))  # Shuffle data for stochastic behavior
+            X_shuffled = X[shuffled_indices]
+            y_shuffled = y[shuffled_indices]
+            # Process mini-batches
+            for i in range(0, len(X), batch_size):
+                batch_X = X_shuffled[i:i + batch_size]
+                batch_y = y_shuffled[i:i + batch_size]
+                batch_loss = 0
+                for j in range(len(batch_X)):
+                    input_sequence = batch_X[j]
+                    target_sequence = batch_y[j]
+                    x_one_hot = np.eye(self.vocab_size)[input_sequence]
+                    y_one_hot = np.eye(self.vocab_size)[target_sequence]
+                    output = self.forward(x_one_hot)
+                    self.backward(x_one_hot, y_one_hot, learning_rate)
+                    loss = -np.sum(y_one_hot * np.log(self.predicted_output + 1e-8))
+                    batch_loss += loss
+                total_loss += batch_loss / len(batch_X)  # Average loss for this batch
             average_loss = total_loss / len(X)
+            if np.isnan(average_loss) or np.isinf(average_loss):
+                print("NaN or Inf values encountered. Aborting training.")
+                return
             if verbose:
                 print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {average_loss}")
             self.save_model()
@@ -100,11 +117,14 @@ class TextToTextNeuralNetwork:
         predictions = self.forward(x_one_hot)
         if predictions.size == 0:
             return None
+        # Apply temperature scaling to modify the prediction probabilities
         scaled_predictions = predictions ** (1 / temperature)
+        scaled_predictions = np.clip(scaled_predictions, 1e-10, 1.0)  # Prevent extremely small values
         normalized_predictions = scaled_predictions / (np.sum(scaled_predictions, axis=1, keepdims=True) + self.EPSILON)
         predicted_sequence = np.argmax(normalized_predictions, axis=1)
         return predicted_sequence
     def pad_sequences(self, sequences):
+        # Pad sequences to the maximum length
         max_len = max(len(seq) for seq in sequences)
         padded_sequences = [np.pad(seq, (0, max_len - len(seq)), 'constant') for seq in sequences]
         return np.array(padded_sequences)
